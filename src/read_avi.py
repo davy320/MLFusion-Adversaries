@@ -6,80 +6,98 @@ from sklearn.model_selection import train_test_split
 
 # Directory where AVI files are stored (update this with the actual directory path)
 avi_files_directory = "RGB"
-avi_files_suffix = "s1_t1_color.avi"
+avi_files_suffix = "t1_color.avi"
 
-class VideoProcessor:
-    def __init__(self, directory, filesuffix):
-        self.directory = directory
-        self.filesuffix = filesuffix
 
-    @staticmethod
-    def get_label_from_filename(filename):
-        parts = filename.split('_')
-        action_number = int(parts[0][1:])  # Extracts the action number (removing 'a' and converting to int)
-        subject_number = int(parts[1][1:])  # Extracts the subject number (removing 's' and converting to int)
-        trial_number = int(parts[2][1:])  # Extracts the trial number (removing 't' and converting to int)
-        return filename
+def get_label_from_filename(filename):
+    parts = filename.split('_')
+    action_number = int(parts[0][1:])  # Extracts the action number (removing 'a' and converting to int)
+    subject_number = int(parts[1][1:])  # Extracts the subject number (removing 's' and converting to int)
+    trial_number = int(parts[2][1:])  # Extracts the trial number (removing 't' and converting to int)
+    return action_number
 
-    @staticmethod
-    def get_minimum_frame_count(videos):
-        return min(len(frames) for frames in videos)
 
-    @staticmethod
-    def evenly_sampled_frames(frames, target_count):
-        frame_indices = np.round(np.linspace(0, len(frames) - 1, target_count)).astype(int)
-        return [frames[i] for i in frame_indices]
+def get_minimum_frame_count(videos):
+    return min(len(frames) for frames in videos)
 
-    def process_avi_files(self):
-        temp_video_data = []
 
-        # First pass: read all videos to determine the minimum frame count
-        for filename in os.listdir(self.directory):
-            if filename.endswith(self.filesuffix):
-                filepath = os.path.abspath(os.path.join(self.directory, filename))
-                cap = cv2.VideoCapture(filepath)
-                frames = []
-                while cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret:
-                        frames.append(frame)
+def evenly_sampled_frames(frames, target_count):
+    frame_indices = np.round(np.linspace(0, len(frames) - 1, target_count)).astype(int)
+    return [frames[i] for i in frame_indices]
+
+
+def process_avi_files(directory, filesuffix, scale_factor=1, min_frame_count=None, resnet=False):
+    video_frames_dict = {}
+
+    # Process each file and store frames in a dictionary
+    for filename in os.listdir(directory):
+        if filename.endswith(filesuffix):
+            filepath = os.path.abspath(os.path.join(directory, filename))
+            cap = cv2.VideoCapture(filepath)
+            frames = []
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    # gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    gray_frame = frame
+                    if resnet:
+                        gray_frame = cv2.resize(gray_frame,
+                                                (frame.shape[1] // scale_factor, frame.shape[0] // scale_factor))
                     else:
-                        break
-                cap.release()
-                temp_video_data.append(frames)
+                        gray_frame = cv2.resize(gray_frame, (224, 224))
+                    frames.append(gray_frame)
+                else:
+                    break
+            cap.release()
+            video_frames_dict[filename] = frames
 
-        # Find the minimum frame count among all videos
-        min_frame_count = self.get_minimum_frame_count(temp_video_data)
+    if min_frame_count is None:
+        min_frame_count = get_minimum_frame_count(list(video_frames_dict.values()))
 
-        video_data = []
-        labels = []
+    video_data = []
+    labels = []
 
-        # Second pass: Sample frames from each video
-        for filename, frames in zip(os.listdir(self.directory), temp_video_data):
-            sampled_frames = self.evenly_sampled_frames(frames, min_frame_count)
-            video_data.append(sampled_frames)
-            label = self.get_label_from_filename(filename)  # Implement this as needed
-            labels.append(label)
+    # Process each item in the dictionary
+    for filename, frames in video_frames_dict.items():
+        sampled_frames = evenly_sampled_frames(frames, min_frame_count)
+        video_data.append(sampled_frames)
+        label = get_label_from_filename(filename)
+        labels.append(label)
 
-        print(len(video_data[0]), len(video_data[1]), len(video_data[1]))
-        # Convert to NumPy arrays
-        video_data = np.array(video_data)
-        labels = np.array(labels)
+    print("Total frames/RGBMPG: ", min_frame_count)
 
-        return video_data, labels
+    video_data = np.array(video_data)
+    labels = np.array(labels)
 
-    @staticmethod
-    def save_video(video_frames, output_file, frame_rate=15, resolution=(640, 480)):
-        # Define the codec and initialize the video writer
-        fourcc = cv2.VideoWriter.fourcc(*'mp4v')  # Adjust based on desired file format
-        out = cv2.VideoWriter(output_file, fourcc, frame_rate, resolution)
+    return video_data, labels
 
-        # Write each frame to the video
-        for frame in video_frames:
-            # Ensure the frame size matches the specified resolution
-            resized_frame = cv2.resize(frame, resolution)
-            out.write(resized_frame)
 
-        # Release the video writer
-        out.release()
+def save_video(video_frames, output_file, frame_rate=15):
+    if len(video_frames[0].shape) == 2:
+        is_grayscale = True
+        temp_frame = cv2.cvtColor(video_frames[0], cv2.COLOR_GRAY2BGR)
+        resolution = (temp_frame.shape[1], temp_frame.shape[0])
+    else:
+        is_grayscale = False
+        resolution = (video_frames[0].shape[1], video_frames[0].shape[0])
 
+    fourcc = cv2.VideoWriter.fourcc(*'MJPG')
+    out = cv2.VideoWriter(output_file, fourcc, frame_rate, resolution, not is_grayscale)
+
+    for frame in video_frames:
+        if is_grayscale:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        out.write(frame)
+
+    out.release()
+
+
+def save_frames_as_images(video_frames, output_directory, image_prefix='frame', image_format='jpg'):
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
+    for i, frame in enumerate(video_frames):
+        image_path = os.path.join(output_directory, f"{image_prefix}_{i}.{image_format}")
+        cv2.imwrite(image_path, frame)
+
+    print(f"Saved {len(video_frames)} frames as images in '{output_directory}'")

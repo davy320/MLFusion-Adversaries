@@ -160,3 +160,12 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+RGBMPG/
+
+Skeleton.zip
+
+*.gif
+out/
+output/
+
